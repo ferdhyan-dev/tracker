@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+aiomqtt==1.0.0
+influxdb-client
+pydantic
+python-dotenv
+APScheduler
+paho-mqtt
