@@ -3,7 +3,7 @@ import paho.mqtt.client as mqtt
 
 # Connect ke broker Mosquitto (service dari docker-compose)
 client = mqtt.Client()
-client.connect("mosquitto", 1883, 60)
+client.connect("localhost", 1883, 60)
 
 # Daftar kendaraan darat (truck)
 land_vehicles = [f"TRUCK-{i:02}" for i in range(1, 6)]
@@ -21,7 +21,8 @@ while True:
             "heading": random.randint(0, 360),
             "ts": int(time.time())
         }
-        topic = f"sim/land/{vehicle}/position"
+        # Menggunakan wildcard '+' untuk jenis kendaraan dan ID kendaraan
+        topic = f"sim/land/{vehicle}/position"  # Topik untuk kendaraan darat
         client.publish(topic, json.dumps(payload))
         print(f"PUB {topic} {payload}")
 
@@ -34,8 +35,9 @@ while True:
             "heading": random.randint(0, 360),
             "ts": int(time.time())
         }
-        topic = f"sim/sea/{vehicle}/position"
+        # Menggunakan wildcard '+' untuk jenis kendaraan dan ID kapal
+        topic = f"sim/sea/{vehicle}/position"  # Topik untuk kapal laut
         client.publish(topic, json.dumps(payload))
         print(f"PUB {topic} {payload}")
 
-    time.sleep(3)
+    time.sleep(3)  # Delay 3 detik untuk tiap iterasi

@@ -1,3 +1,63 @@
-<!doctype html><meta charset="utf-8">
-<title>Tracker</title>
-<p>Backend jalan. Buka <a href="/docs">/docs</a> untuk API docs.</p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ship and Vehicle Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/mqtt.min.js"></script>
+    <style>
+        #map { height: 500px; }
+    </style>
+</head>
+<body>
+    <h2>Ship and Vehicle Tracker</h2>
+    <div id="map"></div>
+
+    <script>
+        // Create the map centered on Indonesia
+        var map = L.map('map').setView([6.0, 106.8], 5);  // Adjust center of map as needed
+
+        // Add OpenStreetMap tile layer to the map
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Create a WebSocket connection to FastAPI backend
+        var ws = new WebSocket("ws://localhost:8000/ws/stream");
+
+        // Event handler for when a message is received through WebSocket
+        ws.onmessage = function(event) {
+            var data = JSON.parse(event.data);  // Parse incoming data from WebSocket
+            console.log(data);
+
+            // Extract data from the WebSocket message (latitude, longitude, speed, heading)
+            var lat = data.lat;
+            var lon = data.lon;
+            var speed = data.speed;
+            var heading = data.heading;
+            var id = data.id;
+
+            // Prepare popup content with information about the vehicle or ship
+            var popupContent = `
+                <b>ID:</b> ${id} <br>
+                <b>Speed:</b> ${speed} km/h <br>
+                <b>Heading:</b> ${heading}° <br>
+                <b>Timestamp:</b> ${new Date().toLocaleString()}
+            `;
+
+            // Check if marker already exists for this vehicle/ship (using ID to identify it)
+            if (window[id]) {
+                // If marker exists, update its position
+                window[id].setLatLng([lat, lon]);
+            } else {
+                // If marker doesn't exist, create a new marker on the map
+                window[id] = L.marker([lat, lon]).addTo(map)
+                    .bindPopup(popupContent)  // Bind the popup to the marker
+                    .openPopup();
+            }
+        };
+    </script>
+</body>
+</html>

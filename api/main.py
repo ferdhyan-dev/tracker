@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from aiomqtt import Client as AioMQTT
 import datetime as dt
+from fastapi import APIRouter
 
 # === ENV ===
 ORG    = os.getenv("INFLUXDB_ORG", "myorg")
@@ -16,6 +17,25 @@ MQTT_P = int(os.getenv("MQTT_PORT", "1883"))
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Router cuaca
+weather_router = APIRouter()
+
+# Endpoint cuaca dummy
+@weather_router.get("/dummy_weather/{lat}/{lon}")
+async def get_dummy_weather(lat: float, lon: float):
+    return {
+        "lat": lat,
+        "lon": lon,
+        "weather": {
+            "temperature": 25,  # Contoh suhu dalam Celsius
+            "wind_speed": 5,    # Kecepatan angin dalam m/s
+            "description": "Clear sky"  # Deskripsi cuaca
+        }
+    }
+
+# Menambahkan router cuaca ke aplikasi FastAPI
+app.include_router(weather_router, prefix="/weather", tags=["weather"])
+
 # Tulis cepat agar langsung kelihatan di Influx
 iclient = InfluxDBClient(url=INFLUX, token=TOKEN, org=ORG)
 writer  = iclient.write_api(write_options=WriteOptions(batch_size=1, flush_interval=1000))
@@ -26,13 +46,19 @@ async def mqtt_worker():
     try:
         async with AioMQTT(MQTT_H, MQTT_P) as client:
             await client.subscribe("sim/+/+/position")
-            print("[MQTT] Subscribed: sim/+/+/position")
+            print("[MQTT] Subscribed to: sim/+/+/position")
+
+            # Menangani event koneksi
+            client.on_connect = lambda client, userdata, flags, rc: print(f"Connected to MQTT with result code {rc}")
+            client.on_message = lambda client, userdata, message: print(f"Received message: {message.topic} -> {message.payload.decode()}")
+
             async with client.unfiltered_messages() as messages:
                 async for m in messages:
                     try:
                         payload = json.loads(m.payload.decode())
                         _, a_type, a_id, _ = m.topic.split("/")
-                        print(f"[MQTT] {m.topic} -> {payload}")
+
+                        print(f"[MQTT] Received {m.topic} -> {payload}")
 
                         # Pastikan payload berisi timestamp
                         timestamp = payload.get("ts")
@@ -42,14 +68,13 @@ async def mqtt_worker():
 
                         # Validasi format timestamp
                         try:
-                            # Pastikan timestamp dalam format nanodetik, jika perlu konversi
                             timestamp = int(float(timestamp) * 1e9)  # Ubah ke nanodetik
                             timestamp = dt.datetime.utcfromtimestamp(timestamp / 1e9)  # Convert ke datetime
                         except ValueError:
                             print("[ERROR] Invalid timestamp format, using current time.")
                             timestamp = dt.datetime.utcnow()  # Gunakan waktu UTC saat ini
 
-                        # Tanpa .time(...) -> menggunakan server time (UTC now)
+                        # Menulis data ke InfluxDB
                         p = (Point("positions")
                              .tag("asset_id", a_id)
                              .tag("type", a_type)
@@ -66,27 +91,55 @@ async def mqtt_worker():
                         for ws in list(WS):
                             try:
                                 await ws.send_json({"id": a_id, "type": a_type, **payload})
-                            except Exception:
+                            except Exception as e:
                                 WS.discard(ws)
+                                print(f"[ERROR] Error broadcasting to WebSocket: {e}")
 
                     except Exception as e:
-                        print("[ERROR] processing MQTT message:", e)
+                        print(f"[ERROR] Error processing MQTT message: {e}")
     except Exception as e:
-        print("[ERROR] MQTT connect:", e)
+        print(f"[ERROR] MQTT connection failed: {e}")
 
 @app.on_event("startup")
 async def boot():
+    # Menjalankan worker MQTT saat aplikasi FastAPI mulai
     asyncio.create_task(mqtt_worker())
 
 @app.websocket("/ws/stream")
 async def ws_stream(ws: WebSocket):
-    await ws.accept(); WS.add(ws)
+    await ws.accept()
+    WS.add(ws)
+    print("[WebSocket] Client connected.")
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
         WS.discard(ws)
+        print("[WebSocket] Client disconnected.")
 
 @app.get("/")
 def read_root():
     return {"message": "Hello World"}
+
+@weather_router.get("/dummy_weather/{lat}/{lon}")
+async def get_dummy_weather(lat: float, lon: float):
+    # Data cuaca dummy
+    weather_data = {
+        "temperature": 25,  # Suhu dalam Celsius
+        "wind_speed": 5,    # Kecepatan angin dalam m/s
+        "description": "Clear sky",  # Deskripsi cuaca
+    }
+
+    # Menulis data ke InfluxDB
+    point = (
+        Point("weather_data")  # Nama measurement
+        .tag("location", f"{lat},{lon}")  # Tag lokasi berdasarkan latitude dan longitude
+        .field("temperature", weather_data["temperature"])  # Data suhu
+        .field("wind_speed", weather_data["wind_speed"])  # Kecepatan angin
+        .field("description", weather_data["description"])  # Deskripsi cuaca
+        .time(time.time())  # Timestamp saat data diterima
+    )
+
+    writer.write(BUCKET, ORG, point)  # Menulis data ke InfluxDB
+    return {"lat": lat, "lon": lon, "weather": weather_data}
+
